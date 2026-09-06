@@ -267,7 +267,7 @@
             </div>
         </div>
     </div>
-    <script>
+        <script>
         const canvas = document.getElementById('visualizer');
         const ctx = canvas.getContext('2d');
         const instructionText = document.getElementById('instruction');
@@ -288,6 +288,7 @@
         let isSoundOn = false;
         let startTime = 0;
         let audioCtx = null;
+        let oscillator = null;
         let gainNode = null;
 
         unlockBtn.addEventListener('click', () => {
@@ -311,18 +312,35 @@
             'equal': { inhale: 4000, hold1: 0, exhale: 4000, hold2: 0 }
         };
 
-        function initAudio() {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                const oscillator = audioCtx.createOscillator();
-                gainNode = audioCtx.createGain();
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(65, audioCtx.currentTime);
-                gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-                oscillator.connect(gainNode);
-                gainNode.connect(audioCtx.destination);
-                oscillator.start();
+        function startAudioEngine() {
+            // Always rebuild the hardware connection fresh to prevent phone freeze out
+            if (audioCtx) {
+                try { audioCtx.close(); } catch(e) {}
             }
+            
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            oscillator = audioCtx.createOscillator();
+            gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'triangle';
+            oscillator.frequency.setValueAtTime(110, audioCtx.currentTime);
+            
+            gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+        }
+
+        function stopAudioEngine() {
+            if (gainNode && audioCtx) {
+                gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
+            }
+            setTimeout(() => {
+                if (!isRunning && audioCtx) {
+                    try { audioCtx.close(); } catch(e) {}
+                    audioCtx = null;
+                }
+            }, 100);
         }
 
         themeSelect.addEventListener('change', (e) => {
@@ -334,12 +352,17 @@
         });
 
         playBtn.addEventListener('click', () => {
-            initAudio();
-            if (audioCtx.state === 'suspended') audioCtx.resume();
             isRunning = !isRunning;
             if (isRunning) {
                 playBtn.innerText = "PAUSE";
                 playBtn.classList.add('active');
+                
+                // Force mobile hardware audio active fresh on every start click
+                startAudioEngine();
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                
                 startTime = performance.now();
                 requestAnimationFrame(animate);
             } else {
@@ -347,20 +370,26 @@
                 playBtn.classList.remove('active');
                 instructionText.innerText = "PAUSED";
                 countdownText.innerText = "--";
-                if (gainNode) gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+                
+                // Tear down engine on pause so mobile hardware releases control cleanly
+                stopAudioEngine();
             }
         });
 
         soundBtn.addEventListener('click', () => {
-            initAudio();
             isSoundOn = !isSoundOn;
             if (isSoundOn) {
                 soundBtn.innerText = "SOUND: ON";
                 soundBtn.classList.add('active');
+                if (isRunning && !audioCtx) {
+                    startAudioEngine();
+                }
             } else {
                 soundBtn.innerText = "SOUND: OFF";
                 soundBtn.classList.remove('active');
-                if (gainNode) gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+                if (gainNode && audioCtx) {
+                    gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
+                }
             }
         });
 
@@ -425,32 +454,32 @@
                 progress = elapsed / inhale;
                 scale = 0.25 + (progress * 0.75);
                 secondsLeft = Math.ceil((inhale - elapsed) / 1000);
-                currentVolume = isSoundOn ? 0.15 + (progress * 0.35) : 0;
+                currentVolume = isSoundOn ? 0.05 + (progress * 0.15) : 0;
             } else if (elapsed < inhale + hold1) {
                 currentAction = "Hold";
                 progress = (elapsed - inhale) / hold1;
                 scale = 1.0;
                 secondsLeft = Math.ceil((inhale + hold1 - elapsed) / 1000);
-                currentVolume = isSoundOn ? 0.50 : 0;
+                currentVolume = isSoundOn ? 0.20 : 0;
             } else if (elapsed < inhale + hold1 + exhale) {
                 currentAction = "Exhale";
                 progress = (elapsed - inhale - hold1) / exhale;
                 scale = 1.0 - (progress * 0.75);
                 secondsLeft = Math.ceil((inhale + hold1 + exhale - elapsed) / 1000);
-                currentVolume = isSoundOn ? 0.50 - (progress * 0.35) : 0;
+                currentVolume = isSoundOn ? 0.20 - (progress * 0.15) : 0;
             } else {
                 currentAction = "Sustain";
                 progress = (elapsed - inhale - hold1 - exhale) / hold2;
                 scale = 0.25;
                 secondsLeft = Math.ceil((totalCycle - elapsed) / 1000);
-                currentVolume = isSoundOn ? 0.15 : 0;
+                currentVolume = isSoundOn ? 0.05 : 0;
             }
 
             instructionText.innerText = currentAction;
             countdownText.innerText = secondsLeft;
 
-            if (isSoundOn && gainNode) {
-                gainNode.gain.setTargetAtTime(currentVolume, audioCtx.currentTime, 0.08);
+            if (isSoundOn && gainNode && audioCtx) {
+                gainNode.gain.setTargetAtTime(currentVolume, audioCtx.currentTime, 0.03);
             }
 
             const centerX = canvas.width / 2;
@@ -478,3 +507,4 @@
     </script>
 </body>
 </html>
+
